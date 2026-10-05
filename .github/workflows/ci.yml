@@ -1,0 +1,66 @@
+name: CI - Retrain Model
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "MLProject/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run actions/checkout@v4
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12.7
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.7"
+
+      - name: Check Env
+        run: |
+          python --version
+          pip --version
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -R MLProject
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mlflow==2.19.0 scikit-learn pandas numpy matplotlib
+
+      - name: Set MLflow Tracking URI
+        run: echo "MLFLOW_TRACKING_URI=file://$GITHUB_WORKSPACE/mlruns" >> "$GITHUB_ENV"
+
+      - name: Run mlflow project
+        run: mlflow run MLProject --env-manager=local
+
+      - name: Get latest MLflow run_id
+        run: |
+          RUN_ID=$(ls -t mlruns/0 | grep -E '^[0-9a-f]{32}$' | head -n 1)
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          echo "Latest run_id: $RUN_ID"
+
+      - name: Install Python dependencies
+        run: |
+          # Catat versi library yang dipakai training agar hasil bisa direproduksi
+          pip freeze > ci_requirements.txt
+
+      - name: Upload to GitHub
+        run: |
+          rm -rf artifacts
+          mkdir -p artifacts
+          cp -r "mlruns/0/${RUN_ID}/artifacts/." artifacts/
+          cp ci_requirements.txt artifacts/
+          echo "run_id=${RUN_ID}" > artifacts/run_info.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts
+          git commit -m "CI: update model artifacts (run ${RUN_ID})" || echo "Tidak ada perubahan artefak"
+          git push
